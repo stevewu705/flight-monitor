@@ -9,39 +9,13 @@ SEATS_API_KEY = os.environ.get("SEATS_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# File to persist hourly message timestamp
-HOURLY_TIMESTAMP_FILE = "/tmp/last_hourly_message.txt"
-STARTUP_LOCK_FILE = "/tmp/startup_message_sent.txt"
+# File to persist daily message timestamp (in repo for GitHub Actions)
+DAILY_TIMESTAMP_FILE = "last_daily_message.txt"
 
 def get_current_time():
     """Get current UTC time for consistent timezone handling"""
     return datetime.now(timezone.utc)
 
-def should_send_startup_message():
-    """Check if we should send startup message (only once per deployment)"""
-    import fcntl
-
-    try:
-        # Try to acquire exclusive lock
-        with open(STARTUP_LOCK_FILE, 'w') as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-            # Check if startup message was already sent for this deployment
-            if os.path.exists(STARTUP_LOCK_FILE + ".sent"):
-                return False
-
-            # Mark startup message as sent
-            with open(STARTUP_LOCK_FILE + ".sent", 'w') as sent_file:
-                sent_file.write(get_current_time().isoformat())
-
-            return True
-
-    except IOError:
-        # Another process already has the lock and is handling startup
-        return False
-    except Exception as e:
-        print(f"Error in startup message check: {e}")
-        return False
 
 def check_seats(origins, destinations, start_date, end_date, cabin="business", direct_only=False):
     """Check seats availability for multiple origins/destinations"""
@@ -297,11 +271,11 @@ def create_found_message(results):
 
     return message
 
-def get_last_hourly_message():
-    """Read last hourly message timestamp from file"""
+def get_last_daily_message():
+    """Read last daily message timestamp from file"""
     try:
-        if os.path.exists(HOURLY_TIMESTAMP_FILE):
-            with open(HOURLY_TIMESTAMP_FILE, 'r') as f:
+        if os.path.exists(DAILY_TIMESTAMP_FILE):
+            with open(DAILY_TIMESTAMP_FILE, 'r') as f:
                 timestamp_str = f.read().strip()
                 # Parse as UTC and ensure timezone awareness
                 dt = datetime.fromisoformat(timestamp_str)
@@ -309,48 +283,31 @@ def get_last_hourly_message():
                     dt = dt.replace(tzinfo=timezone.utc)
                 return dt
     except Exception as e:
-        print(f"Error reading hourly timestamp: {e}")
+        print(f"Error reading daily timestamp: {e}")
     return None
 
-def save_last_hourly_message(timestamp):
-    """Save last hourly message timestamp to file"""
+def save_last_daily_message(timestamp):
+    """Save last daily message timestamp to file"""
     try:
-        with open(HOURLY_TIMESTAMP_FILE, 'w') as f:
+        with open(DAILY_TIMESTAMP_FILE, 'w') as f:
             f.write(timestamp.isoformat())
+        print(f"✅ Saved daily timestamp: {timestamp.isoformat()}")
     except Exception as e:
-        print(f"Error saving hourly timestamp: {e}")
+        print(f"Error saving daily timestamp: {e}")
 
-def should_send_hourly_message():
-    """Check if we should send daily 'no flights' message with file locking"""
-    import fcntl
-
+def should_send_daily_message():
+    """Check if we should send daily 'no flights' message"""
     now = get_current_time()
     current_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Use file locking to prevent race conditions between multiple instances
-    lock_file_path = "/tmp/hourly_message_lock.txt"
+    last_daily_message = get_last_daily_message()
 
-    try:
-        # Try to acquire exclusive lock
-        with open(lock_file_path, 'w') as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    # Send message once per day (24 hours)
+    if last_daily_message is None or last_daily_message < current_day:
+        save_last_daily_message(current_day)
+        return True
 
-            # We have the lock, now check if we should send message
-            last_hourly_message = get_last_hourly_message()
-
-            # Send message once per day (24 hours)
-            if last_hourly_message is None or last_hourly_message < current_day:
-                save_last_hourly_message(current_day)
-                return True
-
-            return False
-
-    except IOError:
-        # Another instance already has the lock and is handling the daily message
-        return False
-    except Exception as e:
-        print(f"Error in daily message check: {e}")
-        return False
+    return False
 
 def create_no_flights_message():
     """Create daily 'no flights found' message"""
@@ -374,7 +331,7 @@ def check_flights_once():
                 send_telegram_message(message)
         else:
             # No flights found - check if we should send daily update
-            if should_send_hourly_message():
+            if should_send_daily_message():
                 print("📬 Sending daily 'no flights' update")
                 send_telegram_message(create_no_flights_message())
             else:
