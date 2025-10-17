@@ -11,10 +11,14 @@ on:
 jobs:
   check-flights:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required to push commits back to repo
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}  # Use GitHub token for authentication
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -46,6 +50,19 @@ jobs:
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
-        git add last_daily_message.txt || true
-        git diff --staged --quiet || git commit -m "Update daily message timestamp [skip ci]"
-        git push || true
+
+        # Check if file exists and add it
+        if [ -f last_daily_message.txt ]; then
+          git add last_daily_message.txt
+
+          # Only commit and push if there are changes
+          if ! git diff --staged --quiet; then
+            git commit -m "Update daily message timestamp [skip ci]"
+            git push
+            echo "✅ Timestamp file committed and pushed"
+          else
+            echo "ℹ️ No changes to timestamp file"
+          fi
+        else
+          echo "⚠️ Timestamp file not found"
+        fi
