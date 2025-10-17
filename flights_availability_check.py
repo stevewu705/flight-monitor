@@ -303,8 +303,8 @@ def should_send_daily_message():
     last_daily_message = get_last_daily_message()
 
     # Send message once per day (24 hours)
+    # Note: Don't save timestamp here - save it AFTER successfully sending message
     if last_daily_message is None or last_daily_message < current_day:
-        save_last_daily_message(current_day)
         return True
 
     return False
@@ -333,7 +333,12 @@ def check_flights_once():
             # No flights found - check if we should send daily update
             if should_send_daily_message():
                 print("📬 Sending daily 'no flights' update")
-                send_telegram_message(create_no_flights_message())
+                success = send_telegram_message(create_no_flights_message())
+                # Only save timestamp if message was sent successfully
+                if success:
+                    current_time = get_current_time()
+                    current_day = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+                    save_last_daily_message(current_day)
             else:
                 print("❌ No flights found - waiting for next check")
 
